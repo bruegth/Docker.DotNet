@@ -4,8 +4,9 @@ using System.Net;
 
 using System.Net.Http;
 using System.Security.Cryptography.X509Certificates;
-using Microsoft.Net.Http.Client;
 using System.Net.Security;
+using System;
+using System.Security.Authentication;
 
 namespace Docker.DotNet.X509
 {
@@ -18,24 +19,23 @@ namespace Docker.DotNet.X509
             _certificate = clientCertificate;
         }
 
-        public RemoteCertificateValidationCallback ServerCertificateValidationCallback { get; set; }
+        public Func<HttpRequestMessage, X509Certificate2, X509Chain, SslPolicyErrors, bool> ServerCertificateValidationCallback { get; set; }
 
         public override HttpMessageHandler GetHandler(HttpMessageHandler innerHandler)
         {
-            var handler = (ManagedHandler)innerHandler;
-            handler.ClientCertificates = new X509CertificateCollection
-            {
-                _certificate
-            };
+            var handler = (HttpClientHandler)innerHandler;
 
-            handler.ServerCertificateValidationCallback = this.ServerCertificateValidationCallback;
-#if !NETSTANDARD1_6
-            if (handler.ServerCertificateValidationCallback == null)
-            {
-                handler.ServerCertificateValidationCallback = ServicePointManager.ServerCertificateValidationCallback;
-            }
-#endif
-
+            handler.ClientCertificates.Add(_certificate);
+            handler.ClientCertificateOptions = ClientCertificateOption.Manual;
+            handler.CheckCertificateRevocationList = false;
+            handler.AllowAutoRedirect = false;
+            handler.UseProxy = false;
+            handler.AllowAutoRedirect = true;
+            handler.MaxAutomaticRedirections = 20;
+            handler.Proxy = null;
+            handler.SslProtocols = SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12;
+            handler.ServerCertificateCustomValidationCallback += ServerCertificateValidationCallback;
+            
             return handler;
         }
 

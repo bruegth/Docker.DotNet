@@ -299,23 +299,6 @@ namespace Docker.DotNet
         /// <param name="id">ID or name of the container.</param>
         Task UnpauseContainerAsync(string id, CancellationToken cancellationToken = default(CancellationToken));
 
-        /// <summary>
-        /// Attach to a container.
-        /// </summary>
-        /// <remarks>
-        /// docker attach
-        /// docker container attach
-        ///
-        /// HTTP POST /containers/(id)/attach
-        ///
-        /// 204 - No error.
-        /// 404 - No such container.
-        /// 500 - Server error.
-        /// </remarks>
-        /// <param name="id">ID or name of the container.</param>
-        /// <param name="tty">Is this a TTY stream.</param>
-        Task<MultiplexedStream> AttachContainerAsync(string id, bool tty, ContainerAttachParameters parameters, CancellationToken cancellationToken = default(CancellationToken));
-
         // TODO: Attach Web Socket
 
         /// <summary>
@@ -435,11 +418,7 @@ namespace Docker.DotNet
         /// </remarks>
         /// <param name="id">Exec instance ID.</param>
         Task StartContainerExecAsync(string id, CancellationToken cancellationToken = default(CancellationToken));
-
-        Task<MultiplexedStream> StartAndAttachContainerExecAsync(string id, bool tty, CancellationToken cancellationToken = default(CancellationToken));
-
-        Task<MultiplexedStream> StartWithConfigContainerExecAsync(string id, ContainerExecStartParameters eConfig, CancellationToken cancellationToken = default(CancellationToken));
-
+        
         /// <summary>
         /// Resize an exec instance.
         ///

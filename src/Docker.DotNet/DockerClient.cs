@@ -5,9 +5,9 @@ using System.IO.Pipes;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Net.Http.Client;
 
 #if (NETSTANDARD1_6 || NETSTANDARD2_0)
 using System.Net.Sockets;
@@ -43,86 +43,17 @@ namespace Docker.DotNet
             Tasks = new TasksOperations(this);
             Volumes = new VolumeOperations(this);
 
-            ManagedHandler handler;
             var uri = Configuration.EndpointBaseUri;
-            switch (uri.Scheme.ToLowerInvariant())
-            {
-                case "npipe":
-                    if (Configuration.Credentials.IsTlsCredentials())
-                    {
-                        throw new Exception("TLS not supported over npipe");
-                    }
-
-                    var segments = uri.Segments;
-                    if (segments.Length != 3 || !segments[1].Equals("pipe/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new ArgumentException($"{Configuration.EndpointBaseUri} is not a valid npipe URI");
-                    }
-
-                    var serverName = uri.Host;
-                    if (string.Equals(serverName, "localhost", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // npipe schemes dont work with npipe://localhost/... and need npipe://./... so fix that for a client here.
-                        serverName = ".";
-                    }
-
-                    var pipeName = uri.Segments[2];
-
-                    uri = new UriBuilder("http", pipeName).Uri;
-                    handler = new ManagedHandler(async (host, port, cancellationToken) =>
-                    {
-                        // NamedPipeClientStream handles file not found by polling until the server arrives. Use a short
-                        // timeout so that the user doesn't get stuck waiting for a dockerd instance that is not running.
-                        var timeout = 100; // 100ms
-                        var stream = new NamedPipeClientStream(serverName, pipeName);
-                        var dockerStream = new DockerPipeStream(stream);
-
-#if NET45
-                        await Task.Run(() => stream.Connect(timeout), cancellationToken);
-#else
-                        await stream.ConnectAsync(timeout, cancellationToken);
-#endif
-                        return dockerStream;
-                    });
-
-                    break;
-
-                case "tcp":
-                case "http":
-                    var builder = new UriBuilder(uri)
-                    {
-                        Scheme = configuration.Credentials.IsTlsCredentials() ? "https" : "http"
-                    };
-                    uri = builder.Uri;
-                    handler = new ManagedHandler();
-                    break;
-
-                case "https":
-                    handler = new ManagedHandler();
-                    break;
-
-#if (NETSTANDARD1_6 || NETSTANDARD2_0)
-                case "unix":
-                    var pipeString = uri.LocalPath;
-                    handler = new ManagedHandler(async (string host, int port, CancellationToken cancellationToken) =>
-                    {
-                        var sock = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-                        await sock.ConnectAsync(new UnixDomainSocketEndPoint(pipeString));
-                        return sock;
-                    });
-                    uri = new UriBuilder("http", uri.Segments.Last()).Uri;
-                    break;
-#endif
-
-                default:
-                    throw new Exception($"Unknown URL scheme {configuration.EndpointBaseUri.Scheme}");
-            }
-
+           
             _endpointBaseUri = uri;
 
-            _client = new HttpClient(Configuration.Credentials.GetHandler(handler), true);
+            HttpClientHandler requestHandler = new HttpClientHandler();
+            
+            _client = new HttpClient(Configuration.Credentials.GetHandler(requestHandler), true);
+            
             DefaultTimeout = Configuration.DefaultTimeout;
-            _client.Timeout = s_InfiniteTimeout;
+            
+            _client.Timeout = new TimeSpan(0,2,0);
         }
 
         public DockerClientConfiguration Configuration { get; }
@@ -282,41 +213,6 @@ namespace Docker.DotNet
             var body = await response.Content.ReadAsStreamAsync();
 
             return new DockerApiStreamedResponse(response.StatusCode, body, response.Headers);
-        }
-
-        internal Task<WriteClosableStream> MakeRequestForHijackedStreamAsync(
-            IEnumerable<ApiResponseErrorHandlingDelegate> errorHandlers,
-            HttpMethod method,
-            string path,
-            IQueryString queryString,
-            IRequestContent body,
-            IDictionary<string, string> headers,
-            CancellationToken cancellationToken)
-        {
-            return MakeRequestForHijackedStreamAsync(errorHandlers, method, path, queryString, body, headers, s_InfiniteTimeout, cancellationToken);
-        }
-
-        internal async Task<WriteClosableStream> MakeRequestForHijackedStreamAsync(
-            IEnumerable<ApiResponseErrorHandlingDelegate> errorHandlers,
-            HttpMethod method,
-            string path,
-            IQueryString queryString,
-            IRequestContent body,
-            IDictionary<string, string> headers,
-            TimeSpan timeout,
-            CancellationToken cancellationToken)
-        {
-            var response = await PrivateMakeRequestAsync(timeout, HttpCompletionOption.ResponseHeadersRead, method, path, queryString, headers, body, cancellationToken).ConfigureAwait(false);
-
-            HandleIfErrorResponse(response.StatusCode, null, errorHandlers);
-
-            var content = response.Content as HttpConnectionResponseContent;
-            if (content == null)
-            {
-                throw new NotSupportedException("message handler does not support hijacked streams");
-            }
-
-            return content.HijackStream();
         }
 
         private Task<HttpResponseMessage> PrivateMakeRequestAsync(
